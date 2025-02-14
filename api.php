@@ -10,6 +10,7 @@
      */
     class MySqlHelper {
         private $mysqli;
+        private $id;
 
         //Connects to our MySQL database when constructed
         public function __construct() {
@@ -29,15 +30,31 @@
          * @param $query string SQL statement to be executed
          * @return bool|mysqli_result|null
          */
-        public function executeQuery($query) {
+        /**
+         * @param $query string SQL statement to be executed
+         * @param $multi bool whether query is a multi query or a single query
+         * @return bool|mysqli_result|null
+         */
+        public function executeQuery($query, $multi) {
             try {
                 //tries to execute the provided SQL statement and return the results
-                return mysqli_query($this->mysqli, $query);
+                $response = ($multi) ? $this->mysqli->multi_query($query) : $this->mysqli->query($query);
+                while($this->mysqli->next_result());
+                $this->id = $this->mysqli->insert_id;
+
+                return $response;
             } catch (Exception $e) {
                 //Calls the error handler if something has gone wrong
                 $this->errorHandler();
             }
             return null;
+        }
+
+        /**
+         * @return mixed gets the id for the inserted item
+         */
+        public function getInsertId() {
+            return $this->id;
         }
 
         private function errorHandler() {
@@ -62,32 +79,99 @@
                 case 200:
                     header("HTTP/1.1 200 OK");
                     break;
+                case 201:
+                    header("HTTP/1.1 201 OK, record created");
+                    break;
                 case 204:
-                    header("HTTP/1.1 204 No Content");
+                    header("HTTP/1.1 204 Ok, no content");
                     break;
                 case 400:
-                    header("HTTP/1.1 400 Bad Request");
+                    header("HTTP/1.1 400 Bad request");
                     break;
                 case 405:
-                    header("HTTP/1.1 405 Method Not Allowed");
+                    header("HTTP/1.1 405 Method not allowed");
                     break;
                 case 500:
-                    header("HTTP/1.1 500 Internal Server Error");
+                    header("HTTP/1.1 500 Internal server error");
                     break;
             }
-
         }
     }
 
     //Switch statement checking whether a GET, POST or a different request was made
     switch ($_SERVER['REQUEST_METHOD']) {
         case 'POST':
-            $source = $_POST["source"];
-            $target = $_POST["target"];
-            $message = $_POST["message"];
 
-            echo $source . $target . $message;
-            break;
+            //Get our 3 required parameters
+            $sourceIsEmpty = empty($_POST["source"]);
+            $targetIsEmpty = empty($_POST["target"]);
+            $messageIsEmpty = empty($_POST["message"]);
+
+            //If any of our parameters are empty, return status 400 and break out of the switch statement
+            if($sourceIsEmpty || $targetIsEmpty || $messageIsEmpty) {
+                ResponseHelper::setResponseHeaders(400);
+                break;
+            }
+
+            //Set our values using a ternary operator, nice and clean :)
+            $source = empty($_POST["source"]) ? "" : $_POST["source"];
+            $target = empty($_POST["target"]) ? "" : $_POST["target"];
+            //Make sure to url decode the received message
+            $message = urldecode(empty($_POST["message"]) ? "" : $_POST["message"]);
+
+            //If our source parameter is not empty, validate what was in it
+            if (!validateString($source)) {
+                //If validation fails, return status 400 and break out of our switch statement
+                ResponseHelper::setResponseHeaders(400);
+                break;
+            }
+
+            //If our target parameter is not empty, validate what was in it
+            if (!validateString($target)) {
+                //If validation fails, return status 400 and break out of our switch statement
+                ResponseHelper::setResponseHeaders(400);
+                break;
+            }
+
+            //Initialise our MySqlHelper class
+            $mysql = new MySqlHelper();
+
+            //Construct the multi query for inserting the source and target users into the user table
+            $query = "INSERT IGNORE INTO users (username) VALUES ('$source'); ";
+            $query .= "INSERT IGNORE INTO users (username) VALUES ('$target')";
+
+            //Execute the multi query
+            $mysql->executeQuery($query, true);
+
+            /**
+             * SQL query that inserts our new message into the message table.
+             * Performs a select and a Left outer Join to get the usernames
+             * from the user table based on the source and target parameters
+             */
+            $query = "INSERT INTO messages (source, target, message)
+             SELECT U1.id, U2.id, '$message'
+             FROM users U1 
+             LEFT OUTER JOIN users U2 on U2.username='$target'
+             WHERE U1.username='$source'";
+
+            //Execute our SQL, single query
+            $mysql->executeQuery($query, false);
+
+            //Get the id returned from the insert operation
+            $id = $mysql->getInsertId();
+
+            /**
+             * If the id is > 0, set our content type to json,
+             * the return status to 201 and echo the json to the response body
+             */
+            if($id > 0) {
+                header('Content-Type: application/json; charset=utf-8');
+                ResponseHelper::setResponseHeaders(201);
+                echo "{ 'id' : ".$mysql->getInsertId()." }";
+            } else {
+                ResponseHelper::setResponseHeaders(500);
+            }
+
         case 'GET':
 
             //Get our 2 optional parameters
@@ -101,8 +185,8 @@
             }
 
             //Set our values using a ternary operator, nice and clean :)
-            $source = urldecode(empty($_GET["source"]) ? "" : $_GET["source"]);
-            $target = urldecode(empty($_GET["target"]) ? "" : $_GET["target"]);
+            $source = empty($_GET["source"]) ? "" : $_GET["source"];
+            $target = empty($_GET["target"]) ? "" : $_GET["target"];
 
             //If our source parameter is not empty, validate what was in it
             if (!$sourceIsEmpty) {
@@ -113,7 +197,7 @@
                 }
             }
 
-            //If our source parameter is not empty, validate what was in it
+            //If our target parameter is not empty, validate what was in it
             if (!$targetIsEmpty) {
                 //If validation fails, return status 400 and break out of our switch statement
                 if (!validateString($target)) {
@@ -155,7 +239,7 @@
                 $mysql = new MySqlHelper();
 
                 //Get a result from the database using our constructed query
-                $result = $mysql->executeQuery($query);
+                $result = $mysql->executeQuery($query, false);
 
                 //Gets all the rows from our result and returns them as an associated array ready to be parsed into JSON
                 $rows = mysqli_fetch_all($result, MYSQLI_ASSOC);

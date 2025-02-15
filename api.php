@@ -178,7 +178,7 @@
             } else {
                 ResponseHelper::setResponseHeaders(500);
             }
-
+            break;
         case 'GET':
 
             //Get our 2 optional parameters

@@ -37,11 +37,17 @@
          */
         public function executeQuery($query, $multi) {
             try {
-                //tries to execute the provided SQL statement and return the results
+                //tries to execute either a multi or single query depending on the value of $multi
                 $response = ($multi) ? $this->mysqli->multi_query($query) : $this->mysqli->query($query);
+
+                //This is to consume the result sent by the MySQL server to avoid
+                // "Commands out of sync; you can't run this command now" error
                 while($this->mysqli->next_result());
+
+                //Gets the id of any modified or inserted rows
                 $this->id = $this->mysqli->insert_id;
 
+                //returns the results
                 return $response;
             } catch (Exception $e) {
                 //Calls the error handler if something has gone wrong
@@ -51,9 +57,10 @@
         }
 
         /**
-         * @return mixed gets the id for the inserted item
+         * @return mixed gets the id for last modified/inserted row
          */
         public function getInsertId() {
+            //Returns the id of the last modified row
             return $this->id;
         }
 
